@@ -1,8 +1,17 @@
 #include "pch.h"
 #include <iostream>
 #include <cmath>
+#include <string>
+#include <sstream>
+#include "Graph.h"
 
 using namespace std;
+//Enable graphics card
+/*extern "C"
+{
+	__declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
+}*/
+
 
 #define WIDTH 1000
 #define HEIGHT 750
@@ -34,9 +43,15 @@ void centerText(sf::Text& text) {
 
 }
 
+string ftos(float f) {
+	stringstream ss;
+	ss << f;
+	return ss.str();
+}
+
 class Particle {
 public:
-	float size=5;
+	float size=2;
 	sf::Color colour;
 	sf::Vector2f pos;
 	float endsize;
@@ -44,19 +59,22 @@ public:
 	float life;
 	float vx;
 	float vy;
-
+	sf::Vertex * v;
 	bool useAccelaration = true;
 	
+	float a = 10;
+
 	sf::Vector2f target = sf::Vector2f(-1,-1);
-	float a = 1000;
-	void(*callback)() = nullptr;
+	void(*callback)(Particle *) = nullptr;
 	static void(*die)(Particle *);
 	sf::Vector2f(*gettarget)(Particle *) = nullptr;
 
 	float getsize() {
 		return size;
 	}
-
+	Particle() {
+		callback = [](Particle * p) {p->die(p); };
+	}
 	void update(sf::Time dt) {
 		if (target != sf::Vector2f(-1, -1) || gettarget != nullptr) {
 			if (gettarget != nullptr) {
@@ -105,9 +123,8 @@ public:
 
 		if (abs(pos.x - target.x) < 20 && abs(pos.y - target.y) < 20) {
 			if (callback != nullptr) {
-				callback();
+				callback(this);
 			}
-			die(this);
 		}
 	}
 };
@@ -116,16 +133,25 @@ void(*Particle::die)(Particle *);
 
 #define DEGTORAD(x) x*(3.1415/180)
 #define RADTODEG(x) x*(180/3.1415)
+#define MAXPARTILES 100000
 static class ParticleSystem : public sf::Drawable {
 private:
 	vector<Particle> particlelist;
 	sf::VertexBuffer buffer;
+	sf::VertexArray arr;
+
 public:
 
 	void die(Particle * p) {
 		for (int i = 0; i < particlelist.size();i++) {
 			if (&particlelist[i] == p) {
+				sf::Vertex * v = p->v;
+
 				particlelist.erase(particlelist.begin() + i);
+				v[0] = sf::Vertex();
+				v[1] = sf::Vertex();
+				v[2] = sf::Vertex();
+				v[3] = sf::Vertex();
 				break;
 			}
 		}
@@ -134,33 +160,36 @@ public:
 
 	ParticleSystem() {
 		buffer = sf::VertexBuffer(sf::PrimitiveType::Quads, sf::VertexBuffer::Stream);
-		buffer.create(2000);
+		buffer.create(MAXPARTILES);
+		arr.resize(MAXPARTILES);
+		
 	}
 	
 	void calculateVerticies() {
 		if (particlelist.size() > 0) {
 			buffer.create(0);
-			buffer.create(2000);
-			sf::VertexArray arr(sf::Quads, particlelist.size() * 4);
-			arr.resize(particlelist.size() * 4);
+			buffer.create(MAXPARTILES);
 			sf::Vertex* freespace = &arr[0];
+
 			for (int i = 0; i < particlelist.size(); i++) {
 				Particle * p = &particlelist[i];
+				auto size = p->getsize();
+				auto c = p->colour;
 				freespace[0] = sf::Vertex(p->pos, p->colour);
-				freespace[1] = sf::Vertex(p->pos + sf::Vector2f(p->getsize(), 0),p->colour);
-				freespace[2] = sf::Vertex(p->pos + sf::Vector2f(p->getsize(), p->getsize()), p->colour);
-				freespace[3] = sf::Vertex(p->pos + sf::Vector2f(0, p->getsize()), p->colour);
-
+				freespace[1] = sf::Vertex(p->pos + sf::Vector2f(size, 0),c);
+				freespace[2] = sf::Vertex(p->pos + sf::Vector2f(size, size), c);
+				freespace[3] = sf::Vertex(p->pos + sf::Vector2f(0, size), c);
+				p->v = freespace;
 				freespace = &arr[i * 4];
 			}
 			buffer.update(&arr[0],particlelist.size()*4,0);
 		}
 		else {
-			buffer.create(0);
 		}
 	}
 
 	void spawn(int n, Particle p, int anglestart, int angleend, sf::Vector2f pos,float svx = 0, float svy = 0) {
+		particlelist.reserve(particlelist.size() + n);
 		for (int i = 0; i < n; i++) {
 			Particle theParticle = p;
 			theParticle.pos = pos;
@@ -170,15 +199,19 @@ public:
 			theParticle.vy = angle > 90 && angle < 270 ? svy * sin(DEGTORAD(theta))  * -1 : svy * sin(DEGTORAD(theta)) * 1;
 			theParticle.vx = angle > 180 ? -1 * svx*cos(DEGTORAD(theta)) : svx * cos(DEGTORAD(theta));
 
-			particlelist.push_back(theParticle);
+			particlelist.emplace_back(theParticle);
 		}
 	}
 
 	void update(sf::Time dt) {
-		for (int i = 0; i < particlelist.size(); i++) {
-			particlelist[i].update(dt);
+		if (particlelist.size() > 0) {
+			for (int i = 0; i < particlelist.size(); i++) {
+				particlelist[i].update(dt);
+			}
+			calculateVerticies();
+			bool test = false;
+
 		}
-		calculateVerticies();
 	}
 
 	void draw(sf::RenderTarget & target, sf::RenderStates states)const {
@@ -190,16 +223,41 @@ public:
  void die(Particle * p) {
 	 particles.die(p);
 }
-
+ bool timesTable = true;
 class Generator {
 protected:
+	bool noHigh = false;
 	float a; float b;
-	void generateNumbers() {
+	bool even;
+	bool under12 = false;
+	string between = "";
+	virtual void generateNumbers() {
 #define DIFFICULTY (difficulty - (find((*generators).begin(), (*generators).end(),this)-(*generators).begin()))
 #define NUMGEN (rand() % 5 * (DIFFICULTY - floor(DIFFICULTY/2))) + floor(DIFFICULTY / 2)
+#define LOWNUM (rand()%5 + DIFFICULTY)
+#define UNDER12 (rand()%5+ (DIFFICULTY > 12 ? 12 : DIFFICULTY))
+		if (rand() % 2 == 2 || noHigh) {
+			a = NUMGEN;
+			b = LOWNUM;
 		
-		a = NUMGEN;
-		b = NUMGEN;
+		}
+		else {
+			a = NUMGEN;
+			b = NUMGEN;
+		}
+		if ((int)a % 2 != 0 && even) {
+			a++;
+		}
+
+		if ((int)b % 2 != 0 && even) {
+			b++;
+		}
+
+		if (under12 && timesTable) {
+			a = UNDER12;
+			b = UNDER12;
+		}
+
 		roundtwo(a);
 		roundtwo(b);
 	}
@@ -208,7 +266,12 @@ public:
 	static vector<Generator*> * generators;
 
 	virtual float getAnswer() = 0;
-	virtual void getQuestion() = 0;
+	virtual void getQuestion() {
+		generateNumbers();
+
+		questionText->setString(ftos(a) + between + ftos(b));
+
+	}
 	virtual int getComplexity() {
 		return a + b;
 	}
@@ -221,9 +284,9 @@ Generator * selectedGenerator;
 
 class Addition :  public Generator {
 public:
-	void getQuestion() override {
-		generateNumbers();
-		questionText->setString(to_string((int)a) + " + " + to_string((int)b));
+	Addition() {
+		between = " + ";
+		
 	}
 	float getAnswer() override {
 		return a + b;
@@ -232,9 +295,8 @@ public:
 
 class Subtraction : public Generator {
 public:
-	void getQuestion() override {
-		generateNumbers();
-		questionText->setString(to_string((int)a) + " - " + to_string((int)b));
+	Subtraction() {
+		between = " - ";
 	}
 	float getAnswer() override {
 		return a - b;
@@ -243,10 +305,10 @@ public:
 
 class Multiplication : public Generator {
 public:
-	void getQuestion() override {
-		generateNumbers();
-		questionText->setString(to_string((int)a) + "*" + to_string((int)b));
-
+	
+	Multiplication() {
+		between = " * ";
+		under12 = true;
 	}
 
 	float getAnswer() override {
@@ -254,6 +316,45 @@ public:
 	}
 };
 
+class Division : public Generator {
+public:
+	void generateNumbers() override {
+		Generator::generateNumbers();
+		a = a * b;
+	}
+	Division() {
+		between = " / ";
+		noHigh = true;
+	}
+
+	float getAnswer() override {
+		return a / b;
+	}
+};
+
+class DecimalDivision : public Generator {
+public:
+	DecimalDivision() {
+		between = "/";
+		noHigh = true;
+	}
+	float getAnswer() override {
+		return a / b;
+	}
+};
+class Half : public Generator {
+public:
+	Half() {
+		between = "/";
+	}
+	void generateNumbers() override{
+		a = NUMGEN;
+		b = 2;
+	}
+	float getAnswer() override {
+		return a / 2;
+	}
+};
 class Button : public sf::Drawable{
 	sf::Shape * shape;
 	sf::Text t;
@@ -354,8 +455,10 @@ public:
 	}
 	void subtractBank(int n) {
 		bank -= n;
-		if (bank < 0) {
+		if (bank <= 0) {
 			bank = 0;
+		}
+		if (bank <= 15) {
 			commit = false;
 		}
 	}
@@ -363,7 +466,7 @@ public:
 	void addScore(int n) {
 		score += n;
 		if (score > levelScore) {
-			levelScore *= 1.5;
+			levelScore *= 1.25;
 			score = 0;
 			difficulty++;
 		}
@@ -382,7 +485,7 @@ int main() {
 	sm.setPosition(WIDTH/2, 50);
 	Particle::die = &die;
 
-	vector<Generator*> generators = {new Addition(), new Subtraction(), new Multiplication()};
+	vector<Generator*> generators = {new Addition(), new Subtraction(), new Multiplication(), new Division(), new DecimalDivision(), new Half()};
 	Generator::generators = &generators;
 
 	srand(time(NULL));
@@ -405,27 +508,32 @@ int main() {
 	input.setCharacterSize(60);
 
 	sf::Text answerstring;
-	answerstring.setPosition(WIDTH / 2 - 50, HEIGHT / 2 + 10);
+	answerstring.setPosition(WIDTH / 2 - 50, HEIGHT / 2 + 40);
 	answerstring.setFont(arial);
 	answerstring.setFillColor(sf::Color::Red);
 
 	
+	bool showdtgraph = true;
+	float culm = 0;
+
+	Graph dtgraph(&culm,arial);
+	dtgraph.setPosition(WIDTH / 2, HEIGHT / 2);
+	dtgraph.setScale(3, 8);
 	sf::String inputString;
 
 	NEWGENERATOR(difficulty);
 	selectedGenerator->getQuestion();
 
 	centerText(question);
-
+	float timecounter = 0;
 	Button playButton(new sf::RectangleShape(sf::Vector2f(100, 40)), []() {s = PLAY; }, "Play", sf::Vector2f(WIDTH / 2-50, HEIGHT / 2));
 	sf::Clock lastQuestion;
 	sf::Clock gameClock;
 	lastQuestion.restart();
-
 	while (window.isOpen()) {
 		window.clear();
 		sf::Event e;
-
+		
 		if (s == MENU) {
 			if (sf::Mouse::isButtonPressed(sf::Mouse::Left)) {
 				playButton.checkClick((sf::Vector2f)sf::Mouse::getPosition(window));
@@ -443,17 +551,23 @@ int main() {
 		}else if (s == PLAY) {
 			sf::Time dt = gameClock.getElapsedTime();
 			gameClock.restart();
+			timecounter += dt.asSeconds();
+			culm += dt.asMilliseconds();
+			if (timecounter > 2) {
+				timecounter = 0;
+				dtgraph.observe();
+			}
 			while (window.pollEvent(e)) {
 				if (e.type == sf::Event::Closed) {
 					window.close();
 
 				}else if (e.type == sf::Event::TextEntered && allow) {
-					if (e.text.unicode == 13) {
+					if (e.text.unicode == 13 && inputString.getSize() != 0) {
 						float answer = stof(inputString.toAnsiString());
 						if (answer == selectedGenerator->getAnswer()) {
 							input.setFillColor(sf::Color::Green);
-							allow = false;
 							correct = true;
+							goto correct;
 						} else {
 							answerstring.setString(to_string(selectedGenerator->getAnswer()));
 							input.setFillColor(sf::Color::Red);
@@ -466,7 +580,9 @@ int main() {
 
 
 					}else if (e.text.unicode == 8) {
-						inputString.erase(inputString.getSize() - 1);
+						if (inputString.getSize() != 0) {
+							inputString.erase(inputString.getSize() - 1);
+						}
 					}else if(e.text.unicode < 128){
 						inputString += static_cast<char>(e.text.unicode);
 					}
@@ -474,7 +590,9 @@ int main() {
 				centerText(input);
 
 				}else if (!allow) {
+				correct:
 					Particle p;
+
 					if (e.text.unicode == 13) {
 						input.setFillColor(sf::Color::White);
 						answerstring.setString("");
@@ -484,14 +602,15 @@ int main() {
 						allow = true;
 						int totalpoints = correct ? selectedGenerator->getComplexity()* 10 : 50 * (questionTime.asSeconds() / 5);
 						
+						
 						if (correct) {
 							p.colour = sf::Color::Green;
-							p.callback = []() {sm.addScore(1); sm.subtractBank(1); };
+							p.callback = [](Particle * p) {if (commit) { die(p); sm.addScore(1); sm.subtractBank(1); }};
 							sm.addBank(totalpoints);
 						} else {
 							p.colour = sf::Color::Red;
 							sm.subtractBank(totalpoints);
-							p.callback = []() {sm.subtractScore(1); };
+							p.callback = [](Particle * p) {if (commit) { die(p); sm.subtractScore(1); } };
 						}
 						if (difficulty > generators.size()) {
 							NEWGENERATOR(generators.size());
@@ -501,29 +620,30 @@ int main() {
 						}
 						selectedGenerator->getQuestion();
 						centerText(question);
-
 						lastQuestion.restart();
 
 						p.gettarget = [](Particle * p) {if (!commit) { return sf::Vector2f(WIDTH / 4, HEIGHT / 2); } else { p->useAccelaration = false;  return sm.getPosition(); } };
 
-						particles.spawn(totalpoints, p, 0, 360,sf::Vector2f(500,500),5,5);
-
+						particles.spawn(totalpoints*100, p, 0, 360,input.getPosition(),5,5);
 					}
 				}
 			}
 
-			particles.update(dt);
+			
 
+			particles.update(dt);
 	
 			window.draw(question);
 			window.draw(input);
 			window.draw(answerstring);
 			window.draw(sm);
 			window.draw(particles);
+			if (showdtgraph) {
+				window.draw(dtgraph);
+			}
 
 		}
 		window.display();
-		gameClock.restart();
 	}
 
 	return 0;

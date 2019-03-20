@@ -164,6 +164,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\..\..\..\Documents\sfml\csv.h" />
+    <ClInclude Include="Graph.h" />
     <ClInclude Include="pch.h" />
   </ItemGroup>
   <ItemGroup>
